@@ -20,7 +20,6 @@ from datetime import datetime
 import requests
 from cryptography.fernet import Fernet
 from dash import Dash, ALL, Input, Output, State, callback, ctx, dcc, html, no_update
-from xhtml2pdf import pisa
 
 # ---------------------------------------------------------------------------
 # Logging
