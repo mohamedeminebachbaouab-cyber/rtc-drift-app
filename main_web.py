@@ -580,17 +580,18 @@ html, body {
   position: relative;
 }
 
+.header {
+  text-align: center;
+  margin-bottom: 10mm;
+}
+
 .logo {
-  height: 12mm;
-  width: auto;
-  display: block;
-  margin-bottom: 6mm;
+  height: 18mm;
 }
 
 h1 {
   font-size: 18pt;
-  margin: 0 0 6mm 0;
-  font-weight: 700;
+  margin: 5mm 0 8mm 0;
 }
 
 .table {
@@ -599,14 +600,21 @@ h1 {
 }
 
 .table td {
-  padding: 3mm 4mm;
+  padding: 4mm;
   border-bottom: 1px solid #ddd;
   font-size: 11pt;
 }
 
 .label {
   font-weight: bold;
-  width: 45%;
+  width: 40%;
+}
+
+.footer {
+  margin-top: 15mm;
+  font-size: 9pt;
+  text-align: right;
+  color: #777;
 }
 
 .result-passed {
@@ -618,13 +626,6 @@ h1 {
   font-weight: bold;
   color: #b71c1c;
 }
-
-.footer {
-  margin-top: 15mm;
-  font-size: 9pt;
-  color: #777;
-  text-align: right;
-}
 </style>
 </head>
 
@@ -632,41 +633,19 @@ h1 {
 
 <div class="a4-sheet">
 
-  <img class="logo"
-       src="%%LOGO_SRC%%"
-       alt="Carrier Logo">
-
-  <h1>RTC Clock Verification</h1>
+  <div class="header">
+    <img class="logo" src="%%LOGO_SRC%%" />
+    <h1>RTC Clock Verification</h1>
+  </div>
 
   <table class="table">
-    <tr>
-      <td class="label">Device</td>
-      <td>%%IMEI%%</td>
-    </tr>
-    <tr>
-      <td class="label">TRU Serial</td>
-      <td>%%TRU_SERIAL%%</td>
-    </tr>
-    <tr>
-      <td class="label">Test executed on</td>
-      <td>%%TEST_DATE%%</td>
-    </tr>
-    <tr>
-      <td class="label">Maximum drift</td>
-      <td>%%DRIFT_MS%% ms</td>
-    </tr>
-    <tr>
-      <td class="label">Drift test duration</td>
-      <td>60 s</td>
-    </tr>
-    <tr>
-      <td class="label">Drift</td>
-      <td>%%DRIFT_PCT%% %</td>
-    </tr>
-    <tr>
-      <td class="label">Result</td>
-      <td class="%%RESULT_CLASS%%">%%RESULT_TEXT%%</td>
-    </tr>
+    <tr><td class="label">Device</td><td>%%IMEI%%</td></tr>
+    <tr><td class="label">TRU Serial</td><td>%%TRU_SERIAL%%</td></tr>
+    <tr><td class="label">Test executed on</td><td>%%TEST_DATE%%</td></tr>
+    <tr><td class="label">Maximum drift</td><td>%%DRIFT_MS%% ms</td></tr>
+    <tr><td class="label">Drift test duration</td><td>60 s</td></tr>
+    <tr><td class="label">Drift</td><td>%%DRIFT_PCT%% %</td></tr>
+    <tr><td class="label">Result</td><td class="%%RESULT_CLASS%%">%%RESULT_TEXT%%</td></tr>
   </table>
 
   <div class="footer">
@@ -680,43 +659,37 @@ h1 {
 """
 
 
-def generate_report_pdf(imei: str, tru_serial: str, result: dict) -> bytes | None:
+def generate_report_html(imei: str, tru_serial: str, result: dict) -> str:
+    print("🔥 TEMPLATE HTML ACTIF")
+
+    with open("report_template.html", "r", encoding="utf-8") as f:
+        template = f.read()
+
     drift = result.get("drift", 0)
     drift_pct = (abs(drift) / 60000) * 100
     passed = drift_pct < 0.1
 
     drift_ts = result.get("last_drift_ts", 0)
-    if drift_ts and drift_ts > 0:
-        test_date = datetime.fromtimestamp(drift_ts).strftime("%m/%d/%Y %H:%M")
-    else:
-        test_date = datetime.now().strftime("%m/%d/%Y %H:%M")
+    test_date = (
+        datetime.fromtimestamp(drift_ts).strftime("%d/%m/%Y %H:%M")
+        if drift_ts else datetime.now().strftime("%d/%m/%Y %H:%M")
+    )
 
-    result_text = "Passed" if passed else "Failed"
-    result_class = "result-passed" if passed else "result-failed"
+    replacements = {
+        "%%IMEI%%": imei,
+        "%%TRU_SERIAL%%": tru_serial,
+        "%%TEST_DATE%%": test_date,
+        "%%DRIFT_MS%%": str(drift),
+        "%%DRIFT_PCT%%": f"{drift_pct:.4f}",
+        "%%RESULT_TEXT%%": "PASSED" if passed else "FAILED",
+        "%%RESULT_CLASS%%": "result-passed" if passed else "result-failed",
+        "%%LOGO_SRC%%": "",  # optionnel
+    }
 
-    logo_src = f"data:image/png;base64,{_LOGO_B64}" if _LOGO_B64 else ""
+    for k, v in replacements.items():
+        template = template.replace(k, str(v))
 
-    html_content = REPORT_TEMPLATE
-    html_content = html_content.replace("%%LOGO_SRC%%", logo_src)
-    html_content = html_content.replace("%%IMEI%%", imei)
-    html_content = html_content.replace("%%TRU_SERIAL%%", tru_serial)
-    html_content = html_content.replace("%%TEST_DATE%%", test_date)
-    html_content = html_content.replace("%%DRIFT_MS%%", str(drift))
-    html_content = html_content.replace("%%DRIFT_PCT%%", f"{drift_pct:.4f}")
-    html_content = html_content.replace("%%RESULT_TEXT%%", result_text)
-    html_content = html_content.replace("%%RESULT_CLASS%%", result_class)
-
-    try:
-        pdf_buffer = io.BytesIO()
-        pisa_status = pisa.CreatePDF(html_content, dest=pdf_buffer)
-        if pisa_status.err:
-            logger.error(f"Erreur xhtml2pdf : {pisa_status.err}")
-            return None
-        pdf_buffer.seek(0)
-        return pdf_buffer.read()
-    except Exception as e:
-        logger.exception(f"Erreur generation PDF : {e}")
-        return None
+    return template
 
 # ---------------------------------------------------------------------------
 # Security
@@ -826,26 +799,37 @@ class TaskManager:
 
         if passed:
             task = self.get_task(task_id)
+        
             if task:
-                report_bytes = generate_report_pdf(task["imei"], task["tru_serial"], result)
-                if report_bytes is not None:
-                    reports_dir = os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)),
-                        "app",
-                        "assets",
-                        "reports",
-                    )
-                    os.makedirs(reports_dir, exist_ok=True)
-                    safe_filename = re.sub(r"[^A-Za-z0-9_.-]", "_", f"rtc_report_{task_id}_{task['imei']}.pdf")
-                    report_path = os.path.join(reports_dir, safe_filename)
-                    try:
-                        with open(report_path, "wb") as report_file:
-                            report_file.write(report_bytes)
-                        report_url = f"/assets/reports/{safe_filename}"
-                        self._update(task_id, report_path=report_path, report_url=report_url)
-                        logger.info(f"Report generated for task {task_id}: {report_path}")
-                    except OSError as exc:
-                        logger.warning(f"Impossible d'ecrire le rapport {report_path}: {exc}")
+                report_html = generate_report_html(task["imei"], task["tru_serial"], result)
+
+                reports_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    "app",
+                    "assets",
+                    "reports",
+                )
+                os.makedirs(reports_dir, exist_ok=True)
+
+                safe_filename = re.sub(
+                    r"[^A-Za-z0-9_.-]",
+                    "_",
+                    f"rtc_report_{task_id}_{task['imei']}.html"
+                )
+
+                report_path = os.path.join(reports_dir, safe_filename)
+
+                try:
+                    with open(report_path, "w", encoding="utf-8") as report_file:
+                        report_file.write(report_html)
+
+                    report_url = f"/assets/reports/{safe_filename}?v={int(time.time())}"
+                    self._update(task_id, report_path=report_path, report_url=report_url)
+
+                    logger.info(f"Report generated for task {task_id}: {report_path}")
+
+                except OSError as exc:
+                    logger.warning(f"Impossible d'ecrire le rapport {report_path}: {exc}")
 
     def _set_error(self, task_id: str, error_key: str, **extra):
         self._update(
