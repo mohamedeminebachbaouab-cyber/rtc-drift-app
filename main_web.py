@@ -1576,24 +1576,16 @@ def create_app() -> Dash:
 
 
 def main():
-    """
-    Lance le serveur Dash en mode web pur.
-    Accessible via http://localhost:8050 ou http://<machine-ip>:8050
-    """
-    # Nettoyer toutes les tâches précédentes au démarrage
     task_manager.clear_tasks()
-    # Nettoyer aussi l'instance utilisée par le dashboard
-    from app.tasks import task_manager as app_task_manager
-    app_task_manager.clear_tasks()
     logger.info("Nettoyage des tâches précédentes effectué")
-    
-    port = int(os.environ.get("RCC_PORT", 8050))
-    host = os.environ.get("RCC_HOST", "0.0.0.0")
-    
+
+    port = int(os.environ.get("PORT", 8050))
+    host = "0.0.0.0"
+
     app = create_app()
-    logger.info(f"Démarrage du serveur web sur http://{host}:{port}")
-    logger.info(f"URL locale : http://localhost:{port}")
-    
+
+    logger.info(f"Démarrage serveur sur http://{host}:{port}")
+
     app.run(host=host, port=port, debug=False)
 
 
