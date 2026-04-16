@@ -312,9 +312,6 @@ body {
     background: #f8f9fa;
     box-shadow: 0 0 14px rgba(0, 0, 0, 0.12);
 }
-    color: #555;
-    cursor: not-allowed;
-}
 
 .btn-small {
     padding: 0.3rem 0.8rem;

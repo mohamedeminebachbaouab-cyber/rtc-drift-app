@@ -16,10 +16,25 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from flask import Flask, request, redirect
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 
 import requests
 from cryptography.fernet import Fernet
 from dash import Dash, ALL, Input, Output, State, callback, ctx, dcc, html, no_update
+
+
+# ---------------------------
+# USERS (simple pour commencer)
+# ---------------------------
+class User(UserMixin):
+    def __init__(self, id):
+        self.id = id
+
+# ⚠️ A remplacer plus tard par une base de données
+USERS = {
+    "admin": {"password": "admin123"}
+}
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -529,7 +544,11 @@ def get_last_payload_text(imei: str, flespi_token: str, from_timestamp: int, to_
 
             messages.sort(key=lambda m: m.get("timestamp", 0), reverse=True)
             latest_msg = messages[0]
-            payload_text = latest_msg.get("payload.text")
+            payload_text = (
+                latest_msg.get("payload.text")
+                or latest_msg.get("payload_text")
+                or latest_msg.get("text")
+            )
 
             if payload_text:
                 logger.info(f"Message {imei} : payload.text recu ({len(str(payload_text))} chars) du message ts={latest_msg.get('timestamp')}")
@@ -1032,7 +1051,6 @@ task_manager = TaskManager()
 # ---------------------------------------------------------------------------
 
 IMEI_REGEX = re.compile(r"^8\d{14}$")
-
 
 def layout(lang: str = "en"):
     return html.Div(
@@ -1554,6 +1572,87 @@ def create_app() -> Dash:
         assets_folder=assets_path,
     )
 
+    server = app.server
+    server.secret_key = os.environ.get("SECRET_KEY", "dev-secret")  # 🔐 OBLIGATOIRE
+
+    # 🔐 Initialisation du login manager
+    login_manager = LoginManager()
+    login_manager.init_app(server)
+    login_manager.login_view = "/login"
+
+    # ✅ 👉 ICI on ajoute le user_loader
+    @login_manager.user_loader
+    def load_user(user_id):
+        if user_id in USERS:
+            return User(user_id)
+        return None
+
+    # ✅ 👉 ROUTE LOGIN
+    def login_layout(lang="en"):
+        return html.Div(
+            className="login-container",
+            children=[
+                html.Div(
+                    className="login-card",
+                    children=[
+
+                        html.Div(
+                            className="login-title",
+                            children="RTC Login"
+                        ),
+
+                        html.Div(
+                            className="login-subtitle",
+                            children="Sign in to continue"
+                        ),
+
+                        html.Div(
+                            className="form-group",
+                            children=[
+                                dcc.Input(
+                                    id="login-username",
+                                    type="text",
+                                    placeholder="Username",
+                                    className="form-input",
+                                )
+                            ],
+                        ),
+
+                        html.Div(
+                            className="form-group",
+                            children=[
+                                dcc.Input(
+                                    id="login-password",
+                                    type="password",
+                                    placeholder="Password",
+                                    className="form-input",
+                                )
+                            ],
+                        ),
+
+                        html.Button(
+                            "Login",
+                            id="login-btn",
+                            className="btn-primary",
+                            n_clicks=0,
+                        ),
+
+                        html.Div(
+                            id="login-error",
+                            className="login-error-global"
+                        ),
+                    ],
+                )
+            ],
+        )
+
+    # ✅ 👉 ROUTE LOGOUT
+    @server.route("/logout")
+    @login_required
+    def logout():
+        logout_user()
+        return redirect("/login")
+
     task_manager.clear_tasks()
 
     app.layout = html.Div(
@@ -1570,7 +1669,40 @@ def create_app() -> Dash:
         Input("lang-store", "data"),
     )
     def display_page(pathname, lang):
-        return layout(lang or "en")
+        lang = lang or "en"
+
+        # 👉 page login
+        if pathname == "/login":
+            return login_layout(lang)
+
+        # 👉 protection if not authenticated
+        if not current_user.is_authenticated:
+            return login_layout(lang)
+
+        # 👉 dashboard
+        return layout(lang)
+
+    from dash import no_update
+
+    @callback(
+        Output("login-error", "children"),
+        Output("url", "pathname"),
+        Input("login-btn", "n_clicks"),
+        State("login-username", "value"),
+        State("login-password", "value"),
+        prevent_initial_call=True,
+    )
+    def handle_login(n_clicks, username, password):
+        if not username or not password:
+            return "Missing credentials", no_update
+
+        user = USERS.get(username)
+
+        if user and user["password"] == password:
+            login_user(User(username))
+            return "", "/"
+
+        return "Login failed ❌", no_update
 
     return app
 
