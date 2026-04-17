@@ -6,6 +6,7 @@ le chiffrement des tokens et le lancement PyWebView.
 
 import base64
 import hashlib
+from http import server
 import io
 import json
 import logging
@@ -680,7 +681,12 @@ h1 {
 def generate_report_html(imei: str, tru_serial: str, result: dict) -> str:
     print("🔥 TEMPLATE HTML ACTIF")
 
-    with open("report_template.html", "r", encoding="utf-8") as f:
+    template_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "report_template.html"
+    )
+
+    with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
     drift = result.get("drift", 0)
@@ -819,35 +825,15 @@ class TaskManager:
             task = self.get_task(task_id)
         
             if task:
+                # reports désactivés : génération HTML uniquement en mémoire
                 report_html = generate_report_html(task["imei"], task["tru_serial"], result)
 
-                reports_dir = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "app",
-                    "assets",
-                    "reports",
-                )
-                os.makedirs(reports_dir, exist_ok=True)
-
-                safe_filename = re.sub(
-                    r"[^A-Za-z0-9_.-]",
-                    "_",
-                    f"rtc_report_{task_id}_{task['imei']}.html"
+                self._update(
+                    task_id,
+                    report_html=report_html,
                 )
 
-                report_path = os.path.join(reports_dir, safe_filename)
-
-                try:
-                    with open(report_path, "w", encoding="utf-8") as report_file:
-                        report_file.write(report_html)
-
-                    report_url = f"/assets/reports/{safe_filename}?v={int(time.time())}"
-                    self._update(task_id, report_path=report_path, report_url=report_url)
-
-                    logger.info(f"Report generated for task {task_id}: {report_path}")
-
-                except OSError as exc:
-                    logger.warning(f"Impossible d'ecrire le rapport {report_path}: {exc}")
+                logger.info(f"Report generated in-memory for task {task_id}")
 
     def _set_error(self, task_id: str, error_key: str, **extra):
         self._update(
@@ -1006,7 +992,8 @@ class TaskManager:
                 self._set_step(task_id, 4, progress_override=p_to, attempt=attempt, max=max_checks)
                 now_ts = int(time.time())
                 # Élargir la fenêtre de recherche pour être plus tolérant aux différences de timestamps
-                search_from = command_sent_ts - 30  # 30 secondes de tolérance avant
+                # search_from = command_sent_ts - 30  # 30 secondes de tolérance avant
+                search_from = command_sent_ts + 1
                 search_to = now_ts + 30  # 30 secondes de tolérance après
                 logger.info(f"[{task_id}] Checking result attempt {attempt}/{max_checks}: window {command_sent_ts} to {now_ts} (extended: {search_from} to {search_to})")
                 payload_text = get_last_payload_text(imei, flespi_token, search_from, search_to)
@@ -1515,38 +1502,29 @@ def _build_result_cell(task: dict, lang: str):
         result = task.get("result") or {}
         drift = result.get("drift", "—")
         children = [html.Span(str(drift), className="col-result")]
-        report_url = task.get("report_url")
-        if report_url:
-            children.append(
-                html.A(
-                    t("result.generate_report", lang),
-                    href=report_url,
-                    target="_blank",
-                    className="report-link",
-                    style={
-                        "display": "inline-flex",
-                        "alignItems": "center",
-                        "justifyContent": "center",
-                        "padding": "0.35rem 0.9rem",
-                        "background": "#ffffff",
-                        "color": "#000000",
-                        "border": "1px solid #d0d0d0",
-                        "borderRadius": "8px",
-                        "textDecoration": "none",
-                        "fontSize": "0.85rem",
-                        "fontWeight": "700",
-                        "boxShadow": "0 0 8px rgba(0, 0, 0, 0.08)",
-                    },
-                )
-            )
-        else:
-            button = html.Button(
-                t("table.view_btn", lang),
-                id={"type": "view-result-btn", "index": task["task_id"]},
-                className="view-btn",
-                n_clicks=0,
-            )
-            children.append(button)
+        download_btn = html.A(
+            t("result.generate_report", lang),
+            href=f"/report/{task['task_id']}",
+            target="_blank",
+            className="report-link",
+            style={
+                "display": "inline-flex",
+                "alignItems": "center",
+                "justifyContent": "center",
+                "padding": "0.35rem 0.9rem",
+                "background": "#ffffff",
+                "color": "#000000",
+                "border": "1px solid #d0d0d0",
+                "borderRadius": "8px",
+                "textDecoration": "none",
+                "fontSize": "0.85rem",
+                "fontWeight": "700",
+                "boxShadow": "0 0 8px rgba(0, 0, 0, 0.08)",
+            },
+        )
+
+        children.append(download_btn)
+
         return html.Div(children=children)
 
     if task["status"] == "error":
@@ -1653,7 +1631,49 @@ def create_app() -> Dash:
         logout_user()
         return redirect("/login")
 
+    @server.route("/report/<task_id>")
+    @login_required
+    def get_report(task_id):
+        task = task_manager.get_task(task_id)
+
+        if not task:
+            return "Report not found", 404
+
+        report_html = task.get("report_html")
+
+        if not report_html:
+            return "Report not available", 404
+
+        from flask import Response
+        return Response(
+            report_html,
+            mimetype="text/html",
+            headers={
+            "Content-Disposition": f'attachment; filename="rtc_report_{task_id}.html"'
+        },
+    )
+
     task_manager.clear_tasks()
+
+    @server.route("/report/<task_id>")
+    def download_report(task_id):
+        task = task_manager.get_task(task_id)
+
+        if not task or not task.get("report_html"):
+            return "Report not found", 404
+
+        html_content = task["report_html"]
+
+        filename = f"rtc_report_{task_id}.html"
+
+        return (
+            html_content,
+            200,
+            {
+                "Content-Type": "text/html",
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
 
     app.layout = html.Div(
         children=[
